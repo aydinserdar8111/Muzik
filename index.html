@@ -395,10 +395,7 @@
       document.body.removeChild(a);
     }
 
-    // -------------------------------------------------------------
-    // INITIAL MOCK DATA
-    // -------------------------------------------------------------
-    const INITIAL_TRACKS = [
+        const INITIAL_TRACKS = [
       {
         id: 'track-1',
         title: 'Seni Tanımadan Önce',
@@ -409,7 +406,8 @@
         genre: 'Indie Rock',
         isLiked: true,
         isDownloaded: true,
-        audioUrl: 'https://commondatastorage.googleapis.com/codeskulptor-demos/DDR_m3g.mp3',
+        youtubeId: 'L_LUpnjgPso',
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
         lyrics: [
           { time: 0, text: '♪ (Sakin ve ritmik enstrümantal giriş) ♪' },
           { time: 12, text: 'Sokaklar boşalırken gece yarısı' },
@@ -431,7 +429,8 @@
         genre: 'Türkçe Rap',
         isLiked: true,
         isDownloaded: true,
-        audioUrl: 'https://commondatastorage.googleapis.com/codeskulptor-assets/EOTR_m3g.mp3',
+        youtubeId: '5qap5aO4i9A',
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
         lyrics: [
           { time: 0, text: '♪ (Ağır bass & synth beat) ♪' },
           { time: 8, text: 'Güneşimi kaybettiğim an başlar felaket' },
@@ -448,7 +447,8 @@
         genre: 'Türkçe Pop',
         isLiked: true,
         isDownloaded: false,
-        audioUrl: 'https://commondatastorage.googleapis.com/codeskulptor-demos/p2o.mp3'
+        youtubeId: 'c3u_YQ4iPrc',
+        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3'
       },
       {
         id: 'track-3-b',
@@ -1193,6 +1193,7 @@
         audioEngine.playTrack(
           track.id,
           track.audioUrl,
+          track.youtubeId,
           (time) => setCurrentTime(time),
           () => handleNextTrack()
         );
