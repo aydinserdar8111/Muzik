@@ -109,23 +109,93 @@
     // -------------------------------------------------------------
     // AUDIO ENGINE & DOWNLOAD HELPER
     // -------------------------------------------------------------
-    const DEFAULT_WORKING_MP3 = 'https://commondatastorage.googleapis.com/codeskulptor-demos/DDR_m3g.mp3';
+    const DEFAULT_WORKING_MP3 = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
 
     class AudioEngine {
       constructor() {
-        this.audioElement = new Audio();
-        this.audioCtx = null;
-        this.synthOscillator = null;
-        this.synthGain = null;
-        this.analyser = null;
-        this.isSynthPlaying = false;
+        this.audioElement = null;
         this.currentTrackId = null;
         this.currentAudioUrl = null;
+        this.isAudioUnlocked = false;
+        this.isAudioBlocked = false;
+        this.isBuffering = false;
+        this.audioStatusText = '';
         this.onTimeUpdateCallback = null;
         this.onEndedCallback = null;
         this.onErrorCallback = null;
+        this.onBufferingCallback = null;
+        this.onAudioBlockCallback = null;
         this.tickerInterval = null;
         this.syntheticCurrentTime = 0;
+
+        if (typeof window !== 'undefined') {
+          this.initAudioElement();
+        }
+      }
+
+      initAudioElement() {
+        if (this.audioElement) return this.audioElement;
+        console.log('🔊 [AudioEngine] HTML5 Audio elementi oluşturuluyor...');
+        this.audioElement = new Audio();
+        this.audioElement.preload = 'auto';
+
+        this.audioElement.addEventListener('loadstart', () => {
+          console.log('⏳ [AudioEngine] Yükleme başladı (loadstart)');
+          this.setBuffering(true, 'Ses yükleniyor...');
+        });
+
+        this.audioElement.addEventListener('canplay', () => {
+          console.log('✅ [AudioEngine] Ses oynatılabilir durumda (canplay)');
+          this.setBuffering(false, 'Ses hazır');
+          this.setAudioBlocked(false);
+        });
+
+        this.audioElement.addEventListener('playing', () => {
+          console.log('▶️ [AudioEngine] Ses başarıyla çalmaya başladı (playing)');
+          this.setBuffering(false, 'Çalınıyor');
+          this.setAudioBlocked(false);
+        });
+
+        this.audioElement.addEventListener('pause', () => {
+          console.log('⏸️ [AudioEngine] Ses duraklatıldı (pause)');
+        });
+
+        this.audioElement.addEventListener('waiting', () => {
+          console.log('⏳ [AudioEngine] Arabelleğe alınıyor (waiting)');
+          this.setBuffering(true, 'Arabelleğe alınıyor...');
+        });
+
+        this.audioElement.addEventListener('ended', () => {
+          console.log('🏁 [AudioEngine] Ses tamamlandı (ended)');
+          this.stopProgressTicker();
+          if (this.onEndedCallback) this.onEndedCallback();
+        });
+
+        this.audioElement.addEventListener('error', (e) => {
+          console.error('❌ [AudioEngine] Ses yükleme hatası! Yedek kaynağa geçiliyor:', e);
+          if (this.currentAudioUrl !== DEFAULT_WORKING_MP3) {
+            this.currentAudioUrl = DEFAULT_WORKING_MP3;
+            if (this.audioElement) {
+              this.audioElement.src = DEFAULT_WORKING_MP3;
+              this.audioElement.load();
+              this.audioElement.play().catch((err) => console.warn('❌ [AudioEngine] Yedek ses hatası:', err));
+            }
+          }
+          if (this.onErrorCallback) this.onErrorCallback(e);
+        });
+
+        return this.audioElement;
+      }
+
+      setBuffering(buffering, statusText) {
+        this.isBuffering = buffering;
+        this.audioStatusText = statusText;
+        if (this.onBufferingCallback) this.onBufferingCallback(buffering, statusText);
+      }
+
+      setAudioBlocked(blocked) {
+        this.isAudioBlocked = blocked;
+        if (this.onAudioBlockCallback) this.onAudioBlockCallback(blocked);
       }
 
       triggerHaptic(type = 'light') {
@@ -139,64 +209,31 @@
         } catch (e) {}
       }
 
-      initAudioContext() {
-        if (!this.audioCtx && typeof window !== 'undefined') {
-          const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
-          if (AudioCtxClass) {
-            this.audioCtx = new AudioCtxClass();
-            this.analyser = this.audioCtx.createAnalyser();
-            this.analyser.fftSize = 64;
-          }
-        }
-        if (this.audioCtx && this.audioCtx.state === 'suspended') {
-          this.audioCtx.resume().catch(() => {});
-        }
+      unlockAudio() {
+        console.log('🔓 [AudioEngine] Ses kilit açma tetiklendi (unlockAudio)');
+        this.initAudioElement();
+        this.isAudioUnlocked = true;
+        this.setAudioBlocked(false);
+        return true;
       }
 
-      startSynthFallback(freq = 220) {
-        try {
-          this.initAudioContext();
-          if (!this.audioCtx) return;
-          this.stopSynth();
-          const osc = this.audioCtx.createOscillator();
-          const gain = this.audioCtx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(freq, this.audioCtx.currentTime);
-          gain.gain.setValueAtTime(0.08, this.audioCtx.currentTime);
-          if (this.analyser) {
-            osc.connect(gain);
-            gain.connect(this.analyser);
-            this.analyser.connect(this.audioCtx.destination);
-          } else {
-            osc.connect(gain);
-            gain.connect(this.audioCtx.destination);
-          }
-          osc.start();
-          this.synthOscillator = osc;
-          this.synthGain = gain;
-          this.isSynthPlaying = true;
-        } catch (e) {}
-      }
-
-      stopSynth() {
-        if (this.synthOscillator) {
-          try {
-            this.synthOscillator.stop();
-            this.synthOscillator.disconnect();
-          } catch (e) {}
-          this.synthOscillator = null;
-        }
-        this.isSynthPlaying = false;
+      setCallbacks(callbacks) {
+        if (callbacks.onTimeUpdate) this.onTimeUpdateCallback = callbacks.onTimeUpdate;
+        if (callbacks.onEnded) this.onEndedCallback = callbacks.onEnded;
+        if (callbacks.onError) this.onErrorCallback = callbacks.onError;
+        if (callbacks.onBufferingChange) this.onBufferingCallback = callbacks.onBufferingChange;
+        if (callbacks.onAudioBlockChange) this.onAudioBlockCallback = callbacks.onAudioBlockChange;
       }
 
       startProgressTicker() {
         this.stopProgressTicker();
+        console.log('⏱️ [AudioEngine] Süre çubuğu ve dalga zamanlayıcısı başlatıldı');
         this.tickerInterval = setInterval(() => {
           if (this.audioElement && !isNaN(this.audioElement.currentTime) && this.audioElement.currentTime >= 0) {
             this.syntheticCurrentTime = this.audioElement.currentTime;
             if (this.onTimeUpdateCallback) this.onTimeUpdateCallback(this.audioElement.currentTime);
-          } else if (this.isSynthPlaying) {
-            this.syntheticCurrentTime += 0.5;
+          } else {
+            this.syntheticCurrentTime += 0.25;
             if (this.onTimeUpdateCallback) this.onTimeUpdateCallback(this.syntheticCurrentTime);
           }
         }, 250);
@@ -211,93 +248,88 @@
 
       playTrack(trackId, audioUrl, onTimeUpdate, onEnded, onError) {
         this.currentTrackId = trackId;
-        this.onTimeUpdateCallback = onTimeUpdate || null;
-        this.onEndedCallback = onEnded || null;
-        this.onErrorCallback = onError || null;
+        if (onTimeUpdate) this.onTimeUpdateCallback = onTimeUpdate;
+        if (onEnded) this.onEndedCallback = onEnded;
+        if (onError) this.onErrorCallback = onError;
         this.syntheticCurrentTime = 0;
         this.triggerHaptic('medium');
-
-        if (!this.audioElement) this.audioElement = new Audio();
-        this.stopProgressTicker();
-        this.stopSynth();
 
         const targetUrl = audioUrl && audioUrl.startsWith('http') ? audioUrl : DEFAULT_WORKING_MP3;
         this.currentAudioUrl = targetUrl;
 
-        this.audioElement.ontimeupdate = () => {
-          if (this.audioElement && !isNaN(this.audioElement.currentTime)) {
-            this.syntheticCurrentTime = this.audioElement.currentTime;
-            if (this.onTimeUpdateCallback) this.onTimeUpdateCallback(this.audioElement.currentTime);
+        console.log(`🎵 [AudioEngine] Parça oynatılıyor (ID: ${trackId}, URL: ${targetUrl})`);
+
+        const audio = this.initAudioElement();
+
+        audio.ontimeupdate = () => {
+          if (!isNaN(audio.currentTime)) {
+            this.syntheticCurrentTime = audio.currentTime;
+            if (this.onTimeUpdateCallback) this.onTimeUpdateCallback(audio.currentTime);
           }
         };
 
-        this.audioElement.onended = () => {
-          this.stopProgressTicker();
-          this.stopSynth();
-          if (this.onEndedCallback) this.onEndedCallback();
-        };
+        if (audio.src !== targetUrl) {
+          audio.src = targetUrl;
+          audio.currentTime = 0;
+          audio.load();
+        }
 
-        this.audioElement.onerror = () => {
-          if (this.audioElement && this.currentAudioUrl !== DEFAULT_WORKING_MP3) {
-            this.currentAudioUrl = DEFAULT_WORKING_MP3;
-            this.audioElement.src = DEFAULT_WORKING_MP3;
-            this.audioElement.load();
-            this.audioElement.play().catch(() => this.startSynthFallback(220));
-          } else {
-            this.startSynthFallback(220);
-          }
-          if (this.onErrorCallback) this.onErrorCallback();
-        };
+        this.startProgressTicker();
 
-        this.audioElement.src = targetUrl;
-        this.audioElement.currentTime = 0;
-        this.audioElement.load();
-
-        const p = this.audioElement.play();
+        const p = audio.play();
         if (p !== undefined) {
           p.then(() => {
-            this.stopSynth();
-            this.startProgressTicker();
-          }).catch(() => {
+            console.log('▶️ [AudioEngine] Ses oynatma başlatıldı!');
+            this.setAudioBlocked(false);
+            this.setBuffering(false, 'Çalınıyor');
+          }).catch((err) => {
+            console.warn('⚠️ [AudioEngine] Otomatik oynatma kısıtlaması veya yükleme uyarısı:', err);
+            this.setAudioBlocked(true);
+            this.setBuffering(false, 'Oynatmak için dokunun');
+
             if (targetUrl !== DEFAULT_WORKING_MP3) {
-              this.audioElement.src = DEFAULT_WORKING_MP3;
-              this.audioElement.load();
-              this.audioElement.play().then(() => this.startProgressTicker()).catch(() => {
-                this.startSynthFallback(220);
-                this.startProgressTicker();
+              console.log('🔄 [AudioEngine] Kesin çalışan ses kaynağına geçiliyor...');
+              audio.src = DEFAULT_WORKING_MP3;
+              audio.load();
+              audio.play().then(() => {
+                console.log('▶️ [AudioEngine] Kesin ses kaynağı çalmaya başladı!');
+                this.setAudioBlocked(false);
+              }).catch((e) => {
+                console.warn('⚠️ [AudioEngine] Kesin ses kaynağı için de kullanıcı dokunuşu bekleniyor:', e);
               });
-            } else {
-              this.startSynthFallback(220);
-              this.startProgressTicker();
             }
           });
-        } else {
-          this.startProgressTicker();
         }
       }
 
       pause() {
+        console.log('⏸️ [AudioEngine] Ses duraklatıldı');
         this.triggerHaptic('light');
         if (this.audioElement) this.audioElement.pause();
         this.stopProgressTicker();
-        this.stopSynth();
       }
 
       resume() {
+        console.log('▶️ [AudioEngine] Ses sürdürülüyor (resume)');
         this.triggerHaptic('light');
-        if (this.audioElement && this.audioElement.src) {
-          const p = this.audioElement.play();
-          if (p !== undefined) {
-            p.then(() => this.startProgressTicker()).catch(() => {
-              this.startSynthFallback(220);
-              this.startProgressTicker();
-            });
-          } else {
-            this.startProgressTicker();
-          }
-        } else if (this.currentTrackId) {
-          this.startSynthFallback(220);
-          this.startProgressTicker();
+        const audio = this.initAudioElement();
+
+        if (!audio.src || audio.src === 'about:blank') {
+          audio.src = this.currentAudioUrl || DEFAULT_WORKING_MP3;
+          audio.load();
+        }
+
+        this.startProgressTicker();
+
+        const p = audio.play();
+        if (p !== undefined) {
+          p.then(() => {
+            console.log('▶️ [AudioEngine] Ses başarıyla sürdürüldü!');
+            this.setAudioBlocked(false);
+          }).catch((err) => {
+            console.warn('⚠️ [AudioEngine] Sürdürme kısıtlaması:', err);
+            this.setAudioBlocked(true);
+          });
         }
       }
 
@@ -908,12 +940,27 @@
     // -------------------------------------------------------------
     // MINI PLAYER COMPONENT
     // -------------------------------------------------------------
-    const MiniPlayer = ({ currentTrack, isPlaying, currentTime, onPlayPause, onToggleLike, onToggleDownload, onOpenFullPlayer }) => {
+    const MiniPlayer = ({ currentTrack, isPlaying, currentTime, isAudioBlocked, isBuffering, audioStatusText, onPlayPause, onToggleLike, onToggleDownload, onOpenFullPlayer, onUnlockAndPlay }) => {
       if (!currentTrack) return null;
       const progressPercent = currentTrack.duration > 0 ? Math.min(100, (currentTime / currentTrack.duration) * 100) : 0;
 
       return (
         <div className="fixed bottom-[60px] left-2 right-2 z-30 max-w-lg mx-auto">
+          {isAudioBlocked && (
+            <div
+              onClick={(e) => { e.stopPropagation(); if (onUnlockAndPlay) onUnlockAndPlay(); }}
+              className="mb-2 bg-gradient-to-r from-emerald-500 via-amber-400 to-emerald-400 text-black px-3.5 py-2 rounded-2xl font-black text-xs flex items-center justify-between shadow-xl cursor-pointer animate-bounce border border-white/30"
+            >
+              <span className="flex items-center space-x-2 truncate">
+                <span className="w-2.5 h-2.5 rounded-full bg-black animate-ping flex-shrink-0" />
+                <span className="truncate">Oynatmak için dokun</span>
+              </span>
+              <span className="bg-black text-emerald-400 px-2.5 py-1 rounded-xl text-[11px] font-black uppercase flex-shrink-0">
+                DOKUN & ÇAL
+              </span>
+            </div>
+          )}
+
           <div onClick={onOpenFullPlayer} className="relative bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-2xl p-2.5 flex items-center justify-between cursor-pointer">
             <div className="absolute top-0 left-3 right-3 h-[2px] bg-white/10 rounded-full overflow-hidden">
               <div className="h-full bg-emerald-500" style={{ width: `${progressPercent}%` }} />
@@ -922,12 +969,30 @@
               <img src={currentTrack.coverUrl} alt={currentTrack.title} className="w-11 h-11 rounded-xl object-cover" />
               <div className="min-w-0">
                 <h4 className="text-sm font-bold text-white truncate">{currentTrack.title}</h4>
-                <p className="text-xs text-gray-400 truncate">{currentTrack.artist}</p>
+                <p className="text-xs text-gray-400 truncate flex items-center gap-1.5">
+                  <span>{currentTrack.artist}</span>
+                  {isBuffering && (
+                    <span className="text-[10px] text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded font-medium">
+                      Yükleniyor
+                    </span>
+                  )}
+                </p>
               </div>
             </div>
             <div className="flex items-center space-x-2">
-              <button onClick={(e) => { e.stopPropagation(); onPlayPause(); }} className="w-10 h-10 rounded-full bg-emerald-500 text-black flex items-center justify-center">
-                <Icon name={isPlaying ? "pause" : "play"} className="w-5 h-5" />
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (isAudioBlocked && onUnlockAndPlay) onUnlockAndPlay();
+                  else onPlayPause();
+                }}
+                className="w-10 h-10 rounded-full bg-emerald-500 text-black flex items-center justify-center font-bold"
+              >
+                {isBuffering ? (
+                  <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Icon name={isPlaying ? "pause" : "play"} className="w-5 h-5" />
+                )}
               </button>
               <button onClick={(e) => { e.stopPropagation(); onOpenFullPlayer(); }} className="p-2 text-gray-400">
                 <Icon name="maximize2" className="w-4 h-4" />
@@ -941,7 +1006,7 @@
     // -------------------------------------------------------------
     // FULL PLAYER MODAL
     // -------------------------------------------------------------
-    const FullPlayerModal = ({ currentTrack, isPlaying, currentTime, isShuffle, isRepeat, onClose, onPlayPause, onNext, onPrev, onToggleShuffle, onToggleRepeat, onSeek, onToggleLike, onToggleDownload, onShareTelegram }) => {
+    const FullPlayerModal = ({ currentTrack, isPlaying, currentTime, isShuffle, isRepeat, isAudioBlocked, isBuffering, audioStatusText, onClose, onPlayPause, onNext, onPrev, onToggleShuffle, onToggleRepeat, onSeek, onToggleLike, onToggleDownload, onShareTelegram, onUnlockAndPlay }) => {
       if (!currentTrack) return null;
 
       return (
@@ -963,14 +1028,34 @@
             <div className="w-64 h-64 sm:w-80 sm:h-80 rounded-3xl overflow-hidden shadow-2xl">
               <img src={currentTrack.coverUrl} alt={currentTrack.title} className="w-full h-full object-cover" />
             </div>
-            <div className="w-full max-w-md mt-6 flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-extrabold text-white">{currentTrack.title}</h2>
-                <p className="text-sm text-gray-400">{currentTrack.artist}</p>
+
+            <div className="w-full max-w-md mt-6 space-y-2">
+              {isAudioBlocked && (
+                <button
+                  onClick={() => { if (onUnlockAndPlay) onUnlockAndPlay(); }}
+                  className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-500 text-black font-black text-sm shadow-xl flex items-center justify-center space-x-2 animate-bounce border-2 border-white cursor-pointer"
+                >
+                  <Icon name="play" className="w-5 h-5" />
+                  <span>Oynatmak için dokun</span>
+                </button>
+              )}
+
+              {isBuffering && (
+                <div className="flex items-center justify-center space-x-2 py-1.5 px-4 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold">
+                  <div className="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                  <span>{audioStatusText || 'Arabelleğe alınıyor...'}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-extrabold text-white">{currentTrack.title}</h2>
+                  <p className="text-sm text-gray-400">{currentTrack.artist}</p>
+                </div>
+                <button onClick={() => onToggleLike(currentTrack.id)}>
+                  <Icon name={currentTrack.isLiked ? "heartFilled" : "heart"} className={`w-7 h-7 ${currentTrack.isLiked ? 'text-red-500' : 'text-gray-400'}`} />
+                </button>
               </div>
-              <button onClick={() => onToggleLike(currentTrack.id)}>
-                <Icon name={currentTrack.isLiked ? "heartFilled" : "heart"} className={`w-7 h-7 ${currentTrack.isLiked ? 'text-red-500' : 'text-gray-400'}`} />
-              </button>
             </div>
           </div>
 
@@ -1030,6 +1115,9 @@
       const [currentTime, setCurrentTime] = useState(0);
       const [isShuffle, setIsShuffle] = useState(false);
       const [isRepeat, setIsRepeat] = useState(false);
+      const [isBuffering, setIsBuffering] = useState(false);
+      const [audioStatusText, setAudioStatusText] = useState('');
+      const [isAudioBlocked, setIsAudioBlocked] = useState(false);
       const [theme, setTheme] = useState('spotify-dark');
 
       const [selectedPlaylist, setSelectedPlaylist] = useState(null);
@@ -1044,6 +1132,32 @@
         is_premium: true,
         photo_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80'
       });
+
+      useEffect(() => {
+        audioEngine.setCallbacks({
+          onTimeUpdate: (time) => setCurrentTime(time),
+          onEnded: () => handleNextTrack(),
+          onBufferingChange: (buffering, status) => {
+            setIsBuffering(buffering);
+            setAudioStatusText(status);
+          },
+          onAudioBlockChange: (blocked) => {
+            setIsAudioBlocked(blocked);
+          }
+        });
+      }, []);
+
+      const handleUnlockAndPlay = () => {
+        audioEngine.unlockAudio();
+        setIsAudioBlocked(false);
+        if (currentTrack) {
+          if (!isPlaying) {
+            handlePlayTrack(currentTrack);
+          } else {
+            audioEngine.resume();
+          }
+        }
+      };
 
       useEffect(() => {
         try {
@@ -1179,10 +1293,14 @@
             currentTrack={currentTrack}
             isPlaying={isPlaying}
             currentTime={currentTime}
+            isAudioBlocked={isAudioBlocked}
+            isBuffering={isBuffering}
+            audioStatusText={audioStatusText}
             onPlayPause={handlePlayPause}
             onToggleLike={handleToggleLike}
             onToggleDownload={handleToggleDownload}
             onOpenFullPlayer={() => setIsFullPlayerOpen(true)}
+            onUnlockAndPlay={handleUnlockAndPlay}
           />
 
           <BottomNav
@@ -1198,6 +1316,9 @@
               currentTime={currentTime}
               isShuffle={isShuffle}
               isRepeat={isRepeat}
+              isAudioBlocked={isAudioBlocked}
+              isBuffering={isBuffering}
+              audioStatusText={audioStatusText}
               onClose={() => setIsFullPlayerOpen(false)}
               onPlayPause={handlePlayPause}
               onNext={handleNextTrack}
@@ -1208,6 +1329,7 @@
               onToggleLike={handleToggleLike}
               onToggleDownload={handleToggleDownload}
               onShareTelegram={() => setIsShareModalOpen(true)}
+              onUnlockAndPlay={handleUnlockAndPlay}
             />
           )}
         </div>
